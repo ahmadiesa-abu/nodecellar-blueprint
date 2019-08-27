@@ -1,0 +1,39 @@
+
+node_types:
+
+  ###########################################################
+  # We define a type that inherits openstack's default
+  # server, and adds monitoring capabillities on top of it.
+  ###########################################################
+
+  nodecellar.nodes.MonitoredServer:
+    derived_from: cloudify.gcp.nodes.Instance
+    properties:
+      agent_config:
+        default:
+          network: { get_input: manager_network }
+          install_method: init_script
+          user: { get_input: agent_user }
+          port: 22
+          key: { get_input: agent_key_private }
+      image_id:
+        default: { get_input: image }
+      instance_type:
+        default: { get_input: instance_type }
+      external_ip:
+        default: true # due to GCP specific that VMs without external ip cannot have direct external access and we need to download
+      block_project_ssh_keys:
+        default: true
+      zone:
+        default: { get_secret: gcp_zone }
+    interfaces:
+      cloudify.interfaces.lifecycle:
+        create:
+          implementation: scripts/gcp/instance_ssh_key.py
+          executor: central_deployment_agent
+          inputs:
+            user:
+              default: { get_input: agent_user }
+            ssh_keys:
+              default:
+              - { get_input: agent_key_public }
