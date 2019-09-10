@@ -109,7 +109,7 @@ node_templates:
     relationships:
       - target: mongodb_host_port
         type: cloudify.openstack.server_connected_to_port
-      - type: cloudify.relationships.depends_on
+      - type: cloudify.relationships.connected_to
         target: cloudify_host_cloud_config
 
   nodejs_host:
@@ -121,7 +121,7 @@ node_templates:
     relationships:
       - target: nodejs_host_port
         type: cloudify.openstack.server_connected_to_port
-      - type: cloudify.relationships.depends_on
+      - type: cloudify.relationships.connected_to
         target: cloudify_host_cloud_config
       - type: cloudify.relationships.contained_in
         target: scaling_group
@@ -133,7 +133,7 @@ node_templates:
     relationships:
       - target: haproxy_host_port
         type: cloudify.openstack.server_connected_to_port
-      - type: cloudify.relationships.depends_on
+      - type: cloudify.relationships.connected_to
         target: cloudify_host_cloud_config
 
   mongodb_host_port:
