@@ -4,8 +4,8 @@ description: >
   This Blueprint installs the nodecellar application behind an haproxy instance on an openstack cloud environment.
 
 imports:
-  - http://cloudify.co/spec/cloudify/5.0.0/types.yaml
-  - plugin:cloudify-openstack-plugin
+  - http://cloudify.co/spec/cloudify/5.1.0/types.yaml
+  - plugin:cloudify-openstack-plugin?version= >=3.0.0
   - plugin:cloudify-utilities-plugin
   - types/nodecellar.yaml
   - types/openstack-types.yaml
@@ -46,8 +46,11 @@ inputs:
   network_deployment_name:
     default: openstack-example-network
 
-  use_existing_network_deployment:
-    default: true
+  user_domain_name:
+    default: default
+
+  project_domain_name:
+    default: default
 
 dsl_definitions:
 
@@ -56,7 +59,9 @@ dsl_definitions:
     password: { get_secret: keystone_password }
     tenant_name: { get_secret: keystone_tenant_name }
     auth_url: { get_secret: keystone_url }
-    region: { get_secret: keystone_region }
+    region_name: { get_secret: keystone_region }
+    user_domain_name: { get_input: user_domain_name }
+    project_domain_name: { get_input: project_domain_name }
 
 node_templates:
 
@@ -71,6 +76,8 @@ node_templates:
           sudo: ['ALL=(ALL) NOPASSWD:ALL']
           ssh-authorized-keys:
           - { get_input: agent_key_public }
+        packages:
+        - python-minimal
 
   nodecellar:
     type: nodecellar.nodes.NodecellarApplicationModule
@@ -105,10 +112,14 @@ node_templates:
   mongod_host:
     type: nodecellar.nodes.MonitoredServer
     properties:
-      openstack_config: *openstack_config
+      client_config: *openstack_config
+      resource_config:
+        image_id: { get_input: image }
+        flavor_id: { get_input: flavor }
+        user_data: { get_attribute: [ cloudify_host_cloud_config, cloud_config ] }
     relationships:
       - target: mongodb_host_port
-        type: cloudify.openstack.server_connected_to_port
+        type: cloudify.relationships.openstack.server_connected_to_port
       - type: cloudify.relationships.connected_to
         target: cloudify_host_cloud_config
 
@@ -117,10 +128,14 @@ node_templates:
     instances:
       deploy: 1
     properties:
-      openstack_config: *openstack_config
+      client_config: *openstack_config
+      resource_config:
+        image_id: { get_input: image }
+        flavor_id: { get_input: flavor }
+        user_data: { get_attribute: [ cloudify_host_cloud_config, cloud_config ] }
     relationships:
       - target: nodejs_host_port
-        type: cloudify.openstack.server_connected_to_port
+        type: cloudify.relationships.openstack.server_connected_to_port
       - type: cloudify.relationships.connected_to
         target: cloudify_host_cloud_config
       - type: cloudify.relationships.contained_in
@@ -129,117 +144,142 @@ node_templates:
   haproxy_frontend_host:
     type: nodecellar.nodes.MonitoredServer
     properties:
-      openstack_config: *openstack_config
+      client_config: *openstack_config
+      resource_config:
+        image_id: { get_input: image }
+        flavor_id: { get_input: flavor }
+        user_data: { get_attribute: [ cloudify_host_cloud_config, cloud_config ] }
     relationships:
       - target: haproxy_host_port
-        type: cloudify.openstack.server_connected_to_port
+        type: cloudify.relationships.openstack.server_connected_to_port
       - type: cloudify.relationships.connected_to
         target: cloudify_host_cloud_config
 
   mongodb_host_port:
-    type: cloudify.openstack.nodes.Port
+    type: cloudify.nodes.openstack.Port
     properties:
-      openstack_config: *openstack_config
+      client_config: *openstack_config
     relationships:
       - type: cloudify.relationships.contained_in
         target: private_network
       - type: cloudify.relationships.depends_on
         target: private_subnet
-      - type: cloudify.openstack.port_connected_to_security_group
+      - type: cloudify.relationships.openstack.port_connected_to_security_group
         target: mongod_security_group
 
   nodejs_host_port:
-    type: cloudify.openstack.nodes.Port
+    type: cloudify.nodes.openstack.Port
     properties:
-      openstack_config: *openstack_config
+      client_config: *openstack_config
     relationships:
       - type: cloudify.relationships.contained_in
         target: private_network
       - type: cloudify.relationships.depends_on
         target: private_subnet
-      - type: cloudify.openstack.port_connected_to_security_group
+      - type: cloudify.relationships.openstack.port_connected_to_security_group
         target: nodecellar_security_group
 
   haproxy_host_port:
-    type: cloudify.openstack.nodes.Port
+    type: cloudify.nodes.openstack.Port
     properties:
-      openstack_config: *openstack_config
+      client_config: *openstack_config
     relationships:
       - type: cloudify.relationships.contained_in
         target: public_network
       - type: cloudify.relationships.depends_on
         target: public_subnet
-      - type: cloudify.openstack.port_connected_to_security_group
+      - type: cloudify.relationships.openstack.port_connected_to_security_group
         target: haproxy_frontend_security_group
-      - type: cloudify.openstack.port_connected_to_floating_ip
+      - type: cloudify.relationships.openstack.port_connected_to_floating_ip
         target: nodecellar_ip
 
   mongod_security_group:
-    type: cloudify.openstack.nodes.SecurityGroup
+    type: cloudify.nodes.openstack.SecurityGroup
     properties:
-      openstack_config: *openstack_config
-      security_group:
-        description: mongod_security_group
-      rules:
-        - remote_ip_prefix: 0.0.0.0/0
-          port: 22
-        - remote_ip_prefix: 0.0.0.0/0
-          port: { get_property: [ mongod, port ] }
-        - remote_ip_prefix: 0.0.0.0/0
-          port: 28017
+      client_config: *openstack_config
+      resource_config:
+        name: mongod-security-group
+        description: 'mongod security group'
+      security_group_rules:
+        - direction: ingress
+          protocol: tcp
+          port_range_min: 22
+          port_range_max: 22
+        - direction: ingress
+          protocol: tcp
+          port_range_min: { get_property: [ mongod, port ] }
+          port_range_max: { get_property: [ mongod, port ] }
+        - direction: ingress
+          protocol: tcp
+          port_range_min: 28017
+          port_range_max: 28017
 
   nodecellar_security_group:
-    type: cloudify.openstack.nodes.SecurityGroup
+    type: cloudify.nodes.openstack.SecurityGroup
     properties:
-      openstack_config: *openstack_config
-      security_group:
-        description: nodecellar_security_group
-      rules:
-        - remote_ip_prefix: 0.0.0.0/0
-          port: 22
-        - remote_ip_prefix: 0.0.0.0/0
-          port: { get_property: [ nodecellar, port ] }
+      client_config: *openstack_config
+      resource_config:
+        name: nodecellar-security-group
+        description: "nodecellar security group"
+      security_group_rules:
+        - direction: ingress
+          protocol: tcp
+          port_range_min: 22
+          port_range_max: 22
+        - direction: ingress
+          protocol: tcp
+          port_range_min: { get_property: [ nodecellar, port ] }
+          port_range_max: { get_property: [ nodecellar, port ] }
 
   haproxy_frontend_security_group:
-    type: cloudify.openstack.nodes.SecurityGroup
+    type: cloudify.nodes.openstack.SecurityGroup
     properties:
-      openstack_config: *openstack_config
-      security_group:
-        description: haproxy_frontend_security_group
-      rules:
-        - remote_ip_prefix: 0.0.0.0/0
-          port: 22
-        - remote_ip_prefix: 0.0.0.0/0
-          port: { get_property: [ haproxy, frontend_port ] }
-        - remote_ip_prefix: 0.0.0.0/0
-          port: { get_property: [ haproxy, statistics_port ]}
+      client_config: *openstack_config
+      resource_config:
+        name: haproxy-frontend-security-group
+        description: "haproxy frontend security group"
+      security_group_rules:
+        - direction: ingress
+          protocol: tcp
+          port_range_min: 22
+          port_range_max: 22
+        - direction: ingress
+          protocol: tcp
+          port_range_min: { get_property: [ haproxy, frontend_port ] }
+          port_range_max: { get_property: [ haproxy, frontend_port ] }
+        - direction: ingress
+          protocol: tcp
+          port_range_min: { get_property: [ haproxy, statistics_port ] }
+          port_range_max: { get_property: [ haproxy, statistics_port ] }
 
   nodecellar_ip:
-    type: cloudify.openstack.nodes.FloatingIP
+    type: cloudify.nodes.openstack.FloatingIP
     properties:
-      openstack_config: *openstack_config
-      floatingip:
-        floating_network_id: { get_attribute: [ openstack, deployment, outputs, external_network ] }
+      client_config: *openstack_config
+      resource_config:
+        floating_network_id: { get_capability: [ { get_input: network_deployment_name }, external_network ] }
     relationships:
     - type: cloudify.relationships.contained_in
       target: openstack
 
   private_subnet:
-    type: cloudify.openstack.nodes.Subnet
+    type: cloudify.nodes.openstack.Subnet
     properties:
-      openstack_config: *openstack_config
+      client_config: *openstack_config
       use_external_resource: true
-      resource_id: { get_attribute: [ openstack, deployment, outputs, private_subnet ] }
+      resource_config:
+        id: { get_capability: [ { get_input: network_deployment_name }, private_subnet ] }
     relationships:
     - type: cloudify.relationships.contained_in
       target: private_network
 
   private_network:
-    type: cloudify.openstack.nodes.Network
+    type: cloudify.nodes.openstack.Network
     properties:
-      openstack_config: *openstack_config
+      client_config: *openstack_config
       use_external_resource: true
-      resource_id: { get_attribute: [ openstack, deployment, outputs, private_network ] }
+      resource_config:
+        id: { get_capability: [ { get_input: network_deployment_name }, private_network ] }
     relationships:
     - type: cloudify.relationships.contained_in
       target: scaling_group
@@ -251,45 +291,33 @@ node_templates:
       target: openstack
 
   public_subnet:
-    type: cloudify.openstack.nodes.Subnet
+    type: cloudify.nodes.openstack.Subnet
     properties:
-      openstack_config: *openstack_config
+      client_config: *openstack_config
       use_external_resource: true
-      resource_id: { get_attribute: [ openstack, deployment, outputs, public_subnet ] }
+      resource_config:
+        id: { get_capability: [ { get_input: network_deployment_name }, public_subnet ] }
     relationships:
     - type: cloudify.relationships.contained_in
       target: public_network
 
   public_network:
-    type: cloudify.openstack.nodes.Network
+    type: cloudify.nodes.openstack.Network
     properties:
-      openstack_config: *openstack_config
+      client_config: *openstack_config
       use_external_resource: true
-      resource_id: { get_attribute: [ openstack, deployment, outputs, public_network ] }
+      resource_config:
+        id: { get_capability: [ { get_input: network_deployment_name }, public_network ] }
     relationships:
     - type: cloudify.relationships.contained_in
       target: openstack
 
   openstack:
-    type: cloudify.nodes.DeploymentProxy
+    type: cloudify.nodes.SharedResource
     properties:
       resource_config:
-        blueprint:
-          id: { get_input: network_deployment_name }
-          blueprint_archive: https://github.com/cloudify-community/blueprint-examples/releases/download/4.5.0/openstack-example-network.zip
-          main_file_name: blueprint.yaml
-          external_resource: { get_input: use_existing_network_deployment }
         deployment:
           id: { get_input: network_deployment_name }
-          outputs:
-            external_network: external_network
-            public_network_router: public_network_router
-            public_network: public_network
-            private_network: private_network
-            public_subnet: public_subnet
-            private_subnet: private_subnet
-          external_resource: { get_input: use_existing_network_deployment }
-        reexecute: false
 
 outputs:
 
